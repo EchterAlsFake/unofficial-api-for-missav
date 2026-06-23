@@ -14,7 +14,7 @@ from typing import List, AsyncGenerator
 from curl_cffi import Response, AsyncSession
 from base_api.base import setup_logger, Helper
 from base_api.modules.type_hints import DownloadReport
-from base_api.modules.errors import BotProtectionDetected, InvalidProxy, UnknownError, NetworkingError
+from base_api.modules.errors import BotProtectionDetected, InvalidProxy, UnknownError, NetworkingError, ResourceGone
 
 BASE_HOST = "client-rapi-missav.recombee.com"
 DATABASE_ID = "missav-default"
@@ -67,6 +67,14 @@ async def _post(core, path: str, json_body: dict, timeout=9):
     resp = await core.fetch(url, json_data=json_body, headers=headers, timeout=timeout, method="POST", get_response=True)
     return resp.json()
 
+
+async def on_error(url: str, error: Exception, attempt: int) -> bool:
+    print(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
+
+    if isinstance(error, ResourceGone):
+        return False
+
+    return True
 
 async def get_html_content(core: BaseCore, url: str) -> str | None | dict:
     # What should I do here?
@@ -248,7 +256,8 @@ class Video:
         return await self.core.download(video=self, quality=quality, path=path, callback=callback, remux=remux,
                            callback_remux=callback_remux, start_segment=start_segment, stop_event=stop_event,
                            segment_state_path=segment_state_path, segment_dir=segment_dir, return_report=return_report,
-                           cleanup_on_stop=cleanup_on_stop, keep_segment_dir=keep_segment_dir)
+                           cleanup_on_stop=cleanup_on_stop, keep_segment_dir=keep_segment_dir,
+                            )
 
 
 class Client(Helper):
@@ -263,7 +272,10 @@ class Client(Helper):
         """Returns the video object"""
         return await Video(url, core=self.core).init()
 
-    async def search(self, query: str, video_count: int = 50) -> AsyncGenerator[Video, None]:
+    async def search(self, query: str, video_count: int = 50,
+                     on_video_error: on_error_hint = on_error,
+                     on_page_error: on_error_hint = None
+                     ) -> AsyncGenerator[Video, None]:
         """
         Mirrors: POST /search/users/{userId}/items/
         Body fields follow the snippet’s Recombee client (searchQuery, count, scenario, filter, booster, logic, etc.)
@@ -290,5 +302,7 @@ class Client(Helper):
         assert videos_concurrency
         cubed_function = partial(very_cursed_extractor, video_urls=video_urls)
 
-        async for video in self.iterator(target_page_urls=["https://missav.ws/en/"], video_link_extractor=cubed_function, max_video_concurrency=videos_concurrency, max_page_concurrency=1): # Don't ask
+        async for video in self.iterator(target_page_urls=["https://missav.ws/en/"], video_link_extractor=cubed_function,
+                                         max_video_concurrency=videos_concurrency, max_page_concurrency=1,
+                                         on_video_error=on_video_error, on_page_error=on_page_error): # Don't ask
             yield await video.init()

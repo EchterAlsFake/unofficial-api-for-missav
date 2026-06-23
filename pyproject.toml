@@ -4,10 +4,10 @@ build-backend = "uv_build"
 
 [project]
 name = "missAV_api"
-version = "2.2"
+version = "2.2.1"
 description = "A Python API for the Porn Site missav.ws"
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = "LGPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
