@@ -51,7 +51,7 @@ This API has been tested and confirmed working on:
 
 
 ```python
-from missav_api import Client
+from missav_api import Client, DownloadConfigHLS
 # Initialize a Client object
 
 async def do_something():
@@ -62,8 +62,14 @@ async def do_something():
     # Information from Video objects
     print(video_object.title)
     # Download the video
+    config = DownloadConfigHLS(
+        quality="best",
+        path="./"
+        # And more (use your IDE ;)
+        
+    )
     
-    await video_object.download(quality="best", path="your_output_path + filename")
+    await video_object.download(config)
 
 # SEE DOCUMENTATION FOR MORE
 ```

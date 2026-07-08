@@ -1,4 +1,4 @@
-__all__ = ["Client", "Callback", "Video"]
+__all__ = ["Client", "Callback", "Video", "DownloadConfigHLS"]
 
-from missav_api.api import Client, Video
 from base_api.modules.progress_bars import Callback
+from missav_api.api import Client, Video, DownloadConfigHLS
