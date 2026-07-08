@@ -1,5 +1,7 @@
 import pytest
-from ..missav_api import Client
+from base_api import DownloadConfigHLS
+
+from ..api import Client
 
 
 
@@ -11,10 +13,12 @@ async def test_video_attributes():
     assert isinstance(video.title, str)
     assert isinstance(video.publish_date, str)
     assert isinstance(video.m3u8_base_url, str)
-    assert isinstance(video.video_code, str)
     assert isinstance(video.thumbnail, str)
 
     search = client.search("stepdaughter", video_count=10)
     async for video in search:
         assert isinstance(video.title, str)
 
+    config_1 = DownloadConfigHLS(quality="best", path="./", return_report=True, remux=True)
+    download = await video.download(config_1)
+    assert download.status == "completed"

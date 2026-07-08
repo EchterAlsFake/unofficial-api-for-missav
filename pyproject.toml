@@ -3,9 +3,9 @@ requires = ["uv_build>=0.9.18,<0.10.0"]
 build-backend = "uv_build"
 
 [project]
-name = "missAV_api"
-version = "2.2.1"
-description = "A Python API for the Porn Site missav.ws"
+name = "unofficial-api-for-missav"
+version = "2.3"
+description = "An asynchronous Python API wrapper and scraper for missav.ws"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12"
 license = "LGPL-3.0-only"
@@ -13,23 +13,43 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Johannes Habel", email = "EchterAlsFake@proton.me" }
 ]
+
+keywords = [
+    "api",
+    "scraper",
+    "async",
+    "asyncio",
+    "video-downloader",
+    "selectolax",
+    "curl-cffi",
+    "hqporner"
+]
+
 dependencies = [
-    "bs4",
-    "eaf_base_api",
+    "selectolax",
+    "eaf-base-api",
     "m3u8",
 ]
 
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
-    "Programming Language :: Python",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Multimedia :: Video"
 ]
 
 [project.optional-dependencies]
-av = ["av; python_version >= '3.10'"]
-full = ["lxml"] # H2 for HTTP 2.0 support, LXML for faster parsing speed, though optional :)
+av = ["av"]
 
 [project.urls]
-Homepage = "https://github.com/EchterAlsFake/missAV_api"
+Homepage = "https://github.com/EchterAlsFake/unofficial-api-for-missav"
+Repository = "https://github.com/EchterAlsFake/unofficial-api-for-missav"
+"Bug Tracker" = "https://github.com/EchterAlsFake/unofficial-api-for-missav/issues"
 
 [tool.setuptools]
 packages = { find = {} }
