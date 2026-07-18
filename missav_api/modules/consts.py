@@ -4,7 +4,6 @@ headers = {
     "referer": "https://missav.ws/",
 }
 
-regex_thumbnail = re.compile(r'og:image" content="(.*?)cover-n.jpg')
 regex_m3u8_js = re.compile(r"'m3u8(.*?)video")
 
 
@@ -13,3 +12,5 @@ def very_cursed_extractor(html_content, video_urls):
     for url in video_urls:
         stuff.append({"url": url})
         # I know this doesn't seem to make sense, but it does
+
+    return stuff

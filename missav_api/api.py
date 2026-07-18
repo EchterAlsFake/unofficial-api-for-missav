@@ -1,23 +1,26 @@
 import os
+import copy
 import time
+import uuid
 import hmac
 import hashlib
+import logging
 import asyncio
-from dataclasses import dataclass
 
 from functools import partial
-from base_api import BaseCore, DownloadConfigHLS
 from urllib.parse import quote
 from typing import AsyncGenerator
+from dataclasses import dataclass, fields
 from base_api.base import Helper, BaseMedia
 from curl_cffi import Response, AsyncSession
 from selectolax.lexbor import LexborHTMLParser
+from base_api import BaseCore, DownloadConfigHLS
 from base_api.modules.type_hints import DownloadReport
 from base_api.modules.errors import BotProtectionDetected, InvalidProxy, UnknownError, NetworkRequestError, ResourceGone
 
 from missav_api.modules.errors import (NetworkError, NotFound, UnknownNetworkError, DownloadFailed, BotDetection,
                                 ProxyError)
-from missav_api.modules.consts import regex_thumbnail, regex_m3u8_js, headers, very_cursed_extractor
+from missav_api.modules.consts import regex_m3u8_js, headers, very_cursed_extractor
 
 from missav_api.modules.type_hints import on_error_hint
 
@@ -26,6 +29,8 @@ DATABASE_ID = "missav-default"
 PUBLIC_TOKEN = "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV"
 # You can change these if you want
 
+logger = logging.getLogger("MissAV API")
+logger.addHandler(logging.NullHandler())
 
 
 def _sign_path(path: str, token: str) -> str:
@@ -52,13 +57,15 @@ async def _post(core, path: str, json_body: dict, timeout=9):
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
+        "Origin": "https://missav.ws",
+        "Referer": "https://missav.ws/",
     }
     resp = await core.fetch(url, json_data=json_body, headers=headers, timeout=timeout, method="POST", get_response=True)
     return resp.json()
 
 
 async def on_error(url: str, error: Exception, attempt: int) -> bool:
-    print(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
+    logger.error(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
 
     if isinstance(error, ResourceGone):
         return False
@@ -109,14 +116,10 @@ class Video(BaseMedia):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_from_html, html_content)
-
-        self.title = data.get("title")
-        self.publish_date = data.get("publish_date")
-        self.m3u8_base_url = data.get("m3u8_base_url")
-        self.thumbnail = data.get("thumbnail")
-        self.keywords = data.get("keywords")
-        self.length = data.get("length")
-
+        allowed_fields = {field.name for field in fields(self)}
+        for key, value in data.items():
+            if key in allowed_fields:
+                setattr(self, key, value)
 
     @staticmethod
     def _extract_from_html(html_content: str) -> dict:
@@ -147,7 +150,7 @@ class Video(BaseMedia):
         :param configuration:
         :return:
         """
-        config = configuration
+        config = copy.deepcopy(configuration)
         config.m3u8_base_url = self.m3u8_base_url
 
         if not config.no_title:
@@ -173,7 +176,7 @@ class Client:
     async def search(self, query: str, video_count: int = 50,
                      on_video_error: on_error_hint = on_error,
                      on_page_error: on_error_hint = None,
-                     keep_original_order: bool = False,
+                     keep_original_order: bool = False, load_html: bool = True,
                      ) -> AsyncGenerator[Video, None]:
         """
         Mirrors: POST /search/users/{userId}/items/
@@ -182,11 +185,10 @@ class Client:
         helper = Helper(constructor=Video, core=self.core)
 
         return_properties = True
-        user_id = "anonymous"
-
+        user_id = f"anon_{uuid.uuid4().hex[:16]}"
         path = f"/search/users/{quote(user_id, safe='')}/items/"
         body = {
-            "searchQuery": query,
+            "searchQuery": query.strip(),
             "count": video_count,
             "cascadeCreate": True,
             "returnProperties": return_properties,
@@ -203,8 +205,8 @@ class Client:
         assert videos_concurrency
         cubed_function = partial(very_cursed_extractor, video_urls=video_urls)
 
-        async for video in helper.iterator(target_page_urls=["https://missav.ws/en/"], video_link_extractor=cubed_function,
+        async for result in helper.iterator(target_page_urls=["https://missav.ws/en/"], video_link_extractor=cubed_function,
                                          max_video_concurrency=videos_concurrency, max_page_concurrency=1,
-                                         keep_original_order=keep_original_order,
+                                         keep_original_order=keep_original_order, fetch_html=load_html,
                                          on_video_error=on_video_error, on_page_error=on_page_error): # Don't ask
-            yield await video.init()
+            yield result

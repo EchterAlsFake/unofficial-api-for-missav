@@ -22,7 +22,7 @@ keywords = [
     "video-downloader",
     "selectolax",
     "curl-cffi",
-    "hqporner"
+    "missav"
 ]
 
 dependencies = [
@@ -50,6 +50,9 @@ av = ["av"]
 Homepage = "https://github.com/EchterAlsFake/unofficial-api-for-missav"
 Repository = "https://github.com/EchterAlsFake/unofficial-api-for-missav"
 "Bug Tracker" = "https://github.com/EchterAlsFake/unofficial-api-for-missav/issues"
+"Support me on Ko-Fi" = "https://ko-fi.com/EchterAlsFake"
+"Donate via PayPal" = "https://paypal.me/EchterAlsFake"
+"Donate via Crypto" = "https://nowpayments.io/donation/EchterAlsFake"
 
 [tool.setuptools]
 packages = { find = {} }
