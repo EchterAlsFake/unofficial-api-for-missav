@@ -17,7 +17,7 @@ async def test_video_attributes():
 
     search = client.search("stepdaughter", video_count=10)
     async for _video in search:
-        assert isinstance(_video.video.title, str)
+        assert isinstance(_video.unwrap().title, str)
 
     config_1 = DownloadConfigHLS(quality="worst", path="./", return_report=True, remux=True)
     download = await video.download(config_1)

@@ -9,20 +9,41 @@ import asyncio
 
 from functools import partial
 from urllib.parse import quote
-from typing import AsyncGenerator
-from dataclasses import dataclass, fields
-from base_api.base import Helper, BaseMedia
-from curl_cffi import Response, AsyncSession
+from typing import AsyncGenerator, ClassVar
+from dataclasses import dataclass
+from curl_cffi import AsyncSession
 from selectolax.lexbor import LexborHTMLParser
-from base_api import BaseCore, DownloadConfigHLS
+from base_api import (
+    BaseCore,
+    BaseMedia,
+    DownloadConfigHLS,
+    ErrorAction,
+    ErrorHandler,
+    ErrorMode,
+    Helper,
+    MediaLoadError,
+    MediaLoadErrors,
+    ResultOrder,
+    RetryPolicy,
+    ScrapeErrorContext,
+    ScrapeResult,
+    media_field,
+)
 from base_api.modules.type_hints import DownloadReport
-from base_api.modules.errors import BotProtectionDetected, InvalidProxy, UnknownError, NetworkRequestError, ResourceGone
+from base_api.modules.errors import (
+    BotProtectionDetected,
+    HTTPStatusError,
+    InvalidProxy,
+    NetworkRequestError,
+    RequestRetriesExhausted,
+    ResourceGone,
+    UnknownError,
+)
 
 from missav_api.modules.errors import (NetworkError, NotFound, UnknownNetworkError, DownloadFailed, BotDetection,
                                 ProxyError)
 from missav_api.modules.consts import regex_m3u8_js, headers, very_cursed_extractor
 
-from missav_api.modules.type_hints import on_error_hint
 
 BASE_HOST = "client-rapi-missav.recombee.com"
 DATABASE_ID = "missav-default"
@@ -31,6 +52,18 @@ PUBLIC_TOKEN = "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV
 
 logger = logging.getLogger("MissAV API")
 logger.addHandler(logging.NullHandler())
+
+SCRAPE_RETRY_POLICY = RetryPolicy(max_attempts=3)
+
+
+def _is_resource_gone(error: BaseException) -> bool:
+    if isinstance(error, ResourceGone):
+        return True
+    if isinstance(error, MediaLoadError):
+        return _is_resource_gone(error.original_error)
+    if isinstance(error, MediaLoadErrors):
+        return any(_is_resource_gone(item) for item in error.errors)
+    return False
 
 
 def _sign_path(path: str, token: str) -> str:
@@ -51,7 +84,7 @@ def _sign_path(path: str, token: str) -> str:
                          hashlib.sha1).hexdigest()
     return unsigned + f"&frontend_sign={signature}"
 
-async def _post(core, path: str, json_body: dict, timeout=9):
+async def _post(core: BaseCore, path: str, json_body: dict, timeout: float = 9) -> dict:
     signed_path = _sign_path(path, PUBLIC_TOKEN)
     url = f"https://{BASE_HOST}{signed_path}"
     headers = {
@@ -60,30 +93,41 @@ async def _post(core, path: str, json_body: dict, timeout=9):
         "Origin": "https://missav.ws",
         "Referer": "https://missav.ws/",
     }
-    resp = await core.fetch(url, json_data=json_body, headers=headers, timeout=timeout, method="POST", get_response=True)
+    resp = await core.request(
+        url,
+        json_data=json_body,
+        headers=headers,
+        timeout=timeout,
+        method="POST",
+    )
     return resp.json()
 
 
-async def on_error(url: str, error: Exception, attempt: int) -> bool:
-    logger.error(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
+async def on_error(context: ScrapeErrorContext) -> ErrorAction:
+    logger.error(
+        "URL: %s, ERROR: %s, Attempt: %s/%s",
+        context.url,
+        context.error,
+        context.attempt,
+        context.max_attempts,
+    )
 
-    if isinstance(error, ResourceGone):
-        return False
+    if _is_resource_gone(context.error):
+        return ErrorAction.SKIP
 
-    return True
+    return ErrorAction.RETRY
 
 
-async def get_html_content(core: BaseCore, url: str) -> str | None | dict:
+async def get_html_content(core: BaseCore, url: str) -> str:
     try:
-        content = await core.fetch(url)
-        if isinstance(content, str):
-            return content
+        return await core.fetch_text(url)
 
-        if isinstance(content, Response):
-            if content.status_code == 404:
-                raise NotFound(f"Server returned 404 for: {url}")
+    except HTTPStatusError as e:
+        if e.status_code == 404:
+            raise NotFound(f"Server returned 404 for: {url}") from e
+        raise NetworkError(str(e)) from e
 
-    except NetworkRequestError as e:
+    except (NetworkRequestError, RequestRetriesExhausted) as e:
         raise NetworkError(str(e)) from e
 
     except InvalidProxy as e:
@@ -100,26 +144,18 @@ async def get_html_content(core: BaseCore, url: str) -> str | None | dict:
 class Video(BaseMedia):
     url: str
     core: BaseCore
-    title: str | None = None
-    publish_date: str | None = None
-    keywords: str | None = None,
-    length: str | None = None
-    m3u8_base_url: str | None = None
-    thumbnail: str | None = None
+    title: str | None = media_field("html")
+    publish_date: str | None = media_field("html")
+    keywords: str | None = media_field("html")
+    length: str | None = media_field("html")
+    m3u8_base_url: str | None = media_field("html")
+    thumbnail: str | None = media_field("html")
 
+    loader_methods: ClassVar[dict[str, str]] = {"html": "_load_html"}
 
-    async def _perform_load(self, api: bool, html: bool, anything_else: bool):
-        if html:
-            await asyncio.gather(self._fetch_html())
-
-    async def _fetch_html(self):
+    async def _load_html(self) -> dict[str, object]:
         html_content = await get_html_content(core=self.core, url=self.url)
-        assert isinstance(html_content, str)
-        data: dict = await asyncio.to_thread(self._extract_from_html, html_content)
-        allowed_fields = {field.name for field in fields(self)}
-        for key, value in data.items():
-            if key in allowed_fields:
-                setattr(self, key, value)
+        return await asyncio.to_thread(self._extract_from_html, html_content)
 
     @staticmethod
     def _extract_from_html(html_content: str) -> dict:
@@ -150,6 +186,7 @@ class Video(BaseMedia):
         :param configuration:
         :return:
         """
+        await self.load_fields("m3u8_base_url", "title")
         config = copy.deepcopy(configuration)
         config.m3u8_base_url = self.m3u8_base_url
 
@@ -171,13 +208,16 @@ class Client:
 
     async def get_video(self, url: str, load_html: bool = True) -> Video:
         """Returns the video object"""
-        return await Video(url=url, core=self.core).load(html=load_html)
+        video = Video(url=url, core=self.core)
+        if load_html:
+            await video.load_sources("html")
+        return video
 
     async def search(self, query: str, video_count: int = 50,
-                     on_video_error: on_error_hint = on_error,
-                     on_page_error: on_error_hint = None,
+                     on_video_error: ErrorHandler | None = on_error,
+                     on_page_error: ErrorHandler | None = None,
                      keep_original_order: bool = False, load_html: bool = True,
-                     ) -> AsyncGenerator[Video, None]:
+                     ) -> AsyncGenerator[ScrapeResult[Video], None]:
         """
         Mirrors: POST /search/users/{userId}/items/
         Body fields follow the snippet’s Recombee client (searchQuery, count, scenario, filter, booster, logic, etc.)
@@ -205,8 +245,19 @@ class Client:
         assert videos_concurrency
         cubed_function = partial(very_cursed_extractor, video_urls=video_urls)
 
-        async for result in helper.iterator(target_page_urls=["https://missav.ws/en/"], video_link_extractor=cubed_function,
-                                         max_video_concurrency=videos_concurrency, max_page_concurrency=1,
-                                         keep_original_order=keep_original_order, fetch_html=load_html,
-                                         on_video_error=on_video_error, on_page_error=on_page_error): # Don't ask
-            yield result
+        stream = helper.iterator(
+            target_page_urls=["https://missav.ws/en/"],
+            item_extractor=cubed_function,
+            max_item_concurrency=videos_concurrency,
+            max_page_concurrency=1,
+            load_sources=("html",) if load_html else (),
+            order=(ResultOrder.ORIGINAL if keep_original_order else ResultOrder.COMPLETION),
+            page_error_mode=ErrorMode.SKIP,
+            page_retry=SCRAPE_RETRY_POLICY,
+            item_retry=SCRAPE_RETRY_POLICY,
+            item_error_handler=on_video_error,
+            page_error_handler=on_page_error,
+        )
+        async with stream:
+            async for result in stream:
+                yield result
