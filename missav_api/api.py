@@ -13,17 +13,16 @@ from typing import AsyncGenerator, ClassVar
 from dataclasses import dataclass
 from curl_cffi import AsyncSession
 from selectolax.lexbor import LexborHTMLParser
+from base_api.modules.config import IteratorConfig
 from base_api import (
     BaseCore,
     BaseMedia,
     DownloadConfigHLS,
     ErrorAction,
-    ErrorHandler,
     ErrorMode,
     Helper,
     MediaLoadError,
     MediaLoadErrors,
-    ResultOrder,
     RetryPolicy,
     ScrapeErrorContext,
     ScrapeResult,
@@ -54,6 +53,18 @@ logger = logging.getLogger("MissAV API")
 logger.addHandler(logging.NullHandler())
 
 SCRAPE_RETRY_POLICY = RetryPolicy(max_attempts=3)
+
+
+def make_iterator_config() -> IteratorConfig:
+    return IteratorConfig(
+        max_page_concurrency=1,
+        load_specific_sources=("html",),
+        item_retry=SCRAPE_RETRY_POLICY,
+        page_retry=SCRAPE_RETRY_POLICY,
+        page_error_mode=ErrorMode.SKIP,
+        item_error_handler=None,
+        page_error_handler=None,
+    )
 
 
 def _is_resource_gone(error: BaseException) -> bool:
@@ -213,11 +224,12 @@ class Client:
             await video.load_sources("html")
         return video
 
-    async def search(self, query: str, video_count: int = 50,
-                     on_video_error: ErrorHandler | None = on_error,
-                     on_page_error: ErrorHandler | None = None,
-                     keep_original_order: bool = False, load_html: bool = True,
-                     ) -> AsyncGenerator[ScrapeResult[Video], None]:
+    async def search(
+        self,
+        query: str,
+        video_count: int = 50,
+        iterator_config: IteratorConfig | None = None,
+    ) -> AsyncGenerator[ScrapeResult[Video], None]:
         """
         Mirrors: POST /search/users/{userId}/items/
         Body fields follow the snippet’s Recombee client (searchQuery, count, scenario, filter, booster, logic, etc.)
@@ -241,22 +253,15 @@ class Client:
         for video in videos:
             video_urls.append(f"https://missav.ws/en/{video['id']}")
 
-        videos_concurrency = self.core.configuration.videos_concurrency
-        assert videos_concurrency
         cubed_function = partial(very_cursed_extractor, video_urls=video_urls)
+
+        if iterator_config is None:
+            iterator_config = make_iterator_config()
 
         stream = helper.iterator(
             target_page_urls=["https://missav.ws/en/"],
             item_extractor=cubed_function,
-            max_item_concurrency=videos_concurrency,
-            max_page_concurrency=1,
-            load_sources=("html",) if load_html else (),
-            order=(ResultOrder.ORIGINAL if keep_original_order else ResultOrder.COMPLETION),
-            page_error_mode=ErrorMode.SKIP,
-            page_retry=SCRAPE_RETRY_POLICY,
-            item_retry=SCRAPE_RETRY_POLICY,
-            item_error_handler=on_video_error,
-            page_error_handler=on_page_error,
+            iterator_config=iterator_config,
         )
         async with stream:
             async for result in stream:
