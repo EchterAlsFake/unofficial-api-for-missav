@@ -59,8 +59,8 @@ def make_iterator_config() -> IteratorConfig:
     return IteratorConfig(
         max_page_concurrency=1,
         load_specific_sources=("html",),
-        item_retry=SCRAPE_RETRY_POLICY,
-        page_retry=SCRAPE_RETRY_POLICY,
+        item_retry=None,
+        page_retry=None,
         page_error_mode=ErrorMode.SKIP,
         item_error_handler=None,
         page_error_handler=None,
