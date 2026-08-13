@@ -13,7 +13,7 @@ from typing import AsyncGenerator, ClassVar
 from dataclasses import dataclass
 from curl_cffi import AsyncSession
 from selectolax.lexbor import LexborHTMLParser
-from base_api.modules.config import IteratorConfig
+from base_api.modules.config import IteratorConfig, RuntimeConfig
 from base_api import (
     BaseCore,
     BaseMedia,
@@ -213,6 +213,7 @@ class Video(BaseMedia):
 class Client:
     def __init__(self, core: BaseCore = BaseCore()):
         self.core = core
+        self.core.configuration.impersonation = "chrome124" # Required
         self.core.initialize_session()
         assert isinstance(self.core.session, AsyncSession)
         self.core.session.headers.update(headers)

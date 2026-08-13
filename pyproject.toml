@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "unofficial-api-for-missav"
-version = "2.5"
+version = "2.6"
 description = "An asynchronous Python API wrapper and scraper for missav.ws"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12"
@@ -61,4 +61,3 @@ packages = { find = {} }
 [tool.uv.build-backend]
 module-name = "missav_api"
 module-root = ""
-

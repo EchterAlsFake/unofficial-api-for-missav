@@ -1,5 +1,5 @@
 import pytest
-from base_api import DownloadConfigHLS
+from base_api import DownloadConfigHLS, BaseCore
 
 from ..api import Client
 
