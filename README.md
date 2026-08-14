@@ -17,6 +17,11 @@
 
 ---
 
+> [!CAUTION]
+> If you get a 'Request blocked by Server!' error, switch impersonation target and set max_workers_download = 1 in RuntimeConfig
+> See: https://curl-cffi.readthedocs.io/en/v0.6.1/impersonate.html
+
+
 # Features
 
 | Category | Details |
