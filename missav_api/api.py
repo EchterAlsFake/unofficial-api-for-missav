@@ -6,10 +6,12 @@ import hmac
 import hashlib
 import logging
 import asyncio
+import argparse
 
+from base_api.modules.static_functions import str_to_bool
 from functools import partial
 from urllib.parse import quote
-from typing import AsyncGenerator, ClassVar
+from typing import AsyncGenerator, ClassVar, Any
 from dataclasses import dataclass
 from curl_cffi import AsyncSession
 from selectolax.lexbor import LexborHTMLParser
@@ -27,6 +29,10 @@ from base_api import (
     ScrapeErrorContext,
     ScrapeResult,
     media_field,
+    is_resource_gone,
+    default_on_error,
+    scrape_stream,
+    make_iterator_config as _base_make_iterator_config,
 )
 from base_api.modules.type_hints import DownloadReport
 from base_api.modules.errors import (
@@ -55,26 +61,21 @@ logger.addHandler(logging.NullHandler())
 SCRAPE_RETRY_POLICY = RetryPolicy(max_attempts=3)
 
 
-def make_iterator_config() -> IteratorConfig:
-    return IteratorConfig(
-        max_page_concurrency=1,
-        load_specific_sources=("html",),
-        item_retry=None,
-        page_retry=None,
-        page_error_mode=ErrorMode.SKIP,
-        item_error_handler=None,
-        page_error_handler=None,
+def make_iterator_config(
+    load_specific_sources: tuple[str, ...] = ("html",),
+    *,
+    max_page_concurrency: int | None = 1,
+    **kwargs: Any,
+) -> IteratorConfig:
+    return _base_make_iterator_config(
+        load_specific_sources=load_specific_sources,
+        max_page_concurrency=max_page_concurrency,
+        **kwargs,
     )
 
 
-def _is_resource_gone(error: BaseException) -> bool:
-    if isinstance(error, ResourceGone):
-        return True
-    if isinstance(error, MediaLoadError):
-        return _is_resource_gone(error.original_error)
-    if isinstance(error, MediaLoadErrors):
-        return any(_is_resource_gone(item) for item in error.errors)
-    return False
+_is_resource_gone = is_resource_gone
+on_error = default_on_error
 
 
 def _sign_path(path: str, token: str) -> str:
@@ -112,21 +113,6 @@ async def _post(core: BaseCore, path: str, json_body: dict, timeout: float = 9) 
         method="POST",
     )
     return resp.json()
-
-
-async def on_error(context: ScrapeErrorContext) -> ErrorAction:
-    logger.error(
-        "URL: %s, ERROR: %s, Attempt: %s/%s",
-        context.url,
-        context.error,
-        context.attempt,
-        context.max_attempts,
-    )
-
-    if _is_resource_gone(context.error):
-        return ErrorAction.SKIP
-
-    return ErrorAction.RETRY
 
 
 async def get_html_content(core: BaseCore, url: str) -> str:
@@ -211,7 +197,9 @@ class Video(BaseMedia):
 
 
 class Client:
-    def __init__(self, core: BaseCore = BaseCore()):
+    def __init__(self, core: BaseCore | None = None):
+        if core is None:
+            core = BaseCore()
         self.core = core
         self.core.configuration.impersonation = "safari17_2_ios" # Required
         self.core.initialize_session()
@@ -259,11 +247,65 @@ class Client:
         if iterator_config is None:
             iterator_config = make_iterator_config()
 
-        stream = helper.iterator(
+        stream = scrape_stream(
+            core=self.core,
+            constructor=Video,
             target_page_urls=["https://missav.ws/en/"],
             item_extractor=cubed_function,
             iterator_config=iterator_config,
         )
-        async with stream:
-            async for result in stream:
-                yield result
+        async for result in stream:
+            yield result
+
+
+def create_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="MissAV API Command Line Interface")
+    parser.add_argument("--download", metavar="URL", type=str, help="URL to download from")
+    parser.add_argument("--quality", metavar="best|half|worst", type=str, default="best", help="The video quality (best, half, worst)")
+    parser.add_argument("--file", metavar="FILE", type=str, help="(Optional) Specify a file with URLs (separated with new lines)")
+    parser.add_argument("--output", metavar="DIR", type=str, required=True, help="The output path (with filename or directory)")
+    parser.add_argument("--no-title", metavar="True,False", type=str, nargs="?", const="True", default="False",
+                        help="Whether to apply video title automatically to output path or not")
+    return parser
+
+
+async def run_main(args_list: list[str] | None = None):
+    parser = create_parser()
+    args = parser.parse_args(args_list)
+    no_title = str_to_bool(args.no_title) if isinstance(args.no_title, str) else bool(args.no_title)
+    config = DownloadConfigHLS(quality=args.quality, path=args.output, no_title=no_title)
+
+    urls: list[str] = []
+    if args.download:
+        urls.append(args.download)
+    if args.file:
+        with open(args.file, "r") as f:
+            urls.extend([line.strip() for line in f if line.strip()])
+
+    if not urls:
+        parser.print_help()
+        return
+
+    client = Client()
+    for url in urls:
+        print(f"Fetching video information for: {url}")
+        try:
+            video = await client.get_video(url, load_html=True)
+            title = getattr(video, "title", None) or url
+            print(f"Starting download for: {title}")
+            await video.download(configuration=config)
+            print(f"Download complete: {title}")
+        except Exception as e:
+            print(f"Error downloading {url}: {e}")
+
+
+def main():
+    try:
+        asyncio.run(run_main())
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+
+
+if __name__ == "__main__":
+    main()
+

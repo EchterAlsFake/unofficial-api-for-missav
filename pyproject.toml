@@ -55,9 +55,15 @@ Repository = "https://github.com/EchterAlsFake/unofficial-api-for-missav"
 "Donate via PayPal" = "https://paypal.me/EchterAlsFake"
 "Donate via Crypto" = "https://nowpayments.io/donation/EchterAlsFake"
 
+[project.scripts]
+missav_api = "missav_api.api:main"
+
 [tool.setuptools]
 packages = { find = {} }
 
 [tool.uv.build-backend]
 module-name = "missav_api"
 module-root = ""
+
+[tool.uv.sources]
+eaf-base-api = { path = "../eaf_base_api", editable = true }
