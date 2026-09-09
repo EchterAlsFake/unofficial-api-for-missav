@@ -1,4 +1,5 @@
 import os
+import re
 import copy
 import time
 import uuid
@@ -166,19 +167,111 @@ class Video(BaseMedia):
         html_content = await get_html_content(core=self.core, url=self.url)
         return await asyncio.to_thread(self._extract_from_html, html_content)
 
-    @staticmethod
-    def _extract_from_html(html_content: str) -> dict:
-        parser = LexborHTMLParser(html_content)
-        title = parser.css_first("meta[property='og:title']").attributes.get("content")
-        keywords = parser.css_first("meta[name='keywords']").attributes.get("content")
-        thumbnail = parser.css_first("meta[property='og:image']").attributes.get("content")
-        publish_date = parser.css_first("meta[property='og:video:release_date']").attributes.get("content")
-        length = parser.css_first("meta[property='og:video:duration']").attributes.get("content")
+    def _extract_from_html(self, html_content: str | None = None) -> dict[str, Any]:
+        if html_content is None and isinstance(self, str):
+            content = self
+            url = "unknown"
+        else:
+            content = html_content or ""
+            url = getattr(self, "url", "unknown")
 
-        javascript_content = regex_m3u8_js.search(html_content).group(1)
-        url_parts = javascript_content.split("|")[::-1]
-        url = f"{url_parts[1]}://{url_parts[2]}.{url_parts[3]}/{url_parts[4]}-{url_parts[5]}-{url_parts[6]}-{url_parts[7]}-{url_parts[8]}/playlist.m3u8"
-        m3u8_base_url = url
+        parser = LexborHTMLParser(content)
+
+        # Layout anchors: 'video.player' or '.under_player' are expected on all video pages
+        if not parser.css_first("video.player") and not parser.css_first(".under_player"):
+            logger.warning(
+                "Video container anchor ('video.player' / '.under_player') not found for %s; page layout may have changed.",
+                url,
+            )
+
+        # 1. Title: og:title -> twitter:title -> h1
+        title_node = parser.css_first("meta[property='og:title']") or parser.css_first("meta[name='twitter:title']")
+        if title_node and (c := title_node.attributes.get("content")):
+            title = c.strip()
+        elif h1_node := parser.css_first("h1"):
+            title = h1_node.text(strip=True) or None
+        else:
+            title = None
+
+        if not title:
+            logger.warning("Title not found for %s", url)
+
+        # 2. Thumbnail: og:image -> twitter:image -> video[data-poster]
+        thumb_node = parser.css_first("meta[property='og:image']") or parser.css_first("meta[name='twitter:image']")
+        if thumb_node and (c := thumb_node.attributes.get("content")):
+            thumbnail = c.strip()
+        elif (video_node := parser.css_first("video[data-poster]")) and (poster := video_node.attributes.get("data-poster")):
+            thumbnail = poster.strip()
+        else:
+            thumbnail = None
+
+        if not thumbnail:
+            logger.warning("Thumbnail not found for %s", url)
+
+        # 3. Publish Date: og:video:release_date -> time tag
+        date_node = parser.css_first("meta[property='og:video:release_date']")
+        if date_node and (c := date_node.attributes.get("content")):
+            publish_date = c.strip()
+        elif time_node := parser.css_first("time"):
+            raw_date = time_node.attributes.get("datetime") or time_node.text(strip=True)
+            publish_date = raw_date.split("T")[0].strip() if raw_date else None
+        else:
+            publish_date = None
+
+        if not publish_date:
+            logger.warning("Publish date not found for %s", url)
+
+        # 4. Length: og:video:duration -> .plyr__time--duration -> seek slider aria-valuemax
+        length_node = parser.css_first("meta[property='og:video:duration']")
+        if length_node and (c := length_node.attributes.get("content")):
+            length = c.strip()
+        elif time_node := parser.css_first(".plyr__time--duration"):
+            length = time_node.text(strip=True) or None
+        elif (seek_node := parser.css_first("input[data-plyr='seek']")) and (val := seek_node.attributes.get("aria-valuemax")):
+            length = val.strip()
+        else:
+            length = None
+
+        if not length:
+            logger.warning("Length not found for %s", url)
+
+        # 5. Keywords: meta keywords -> og:video:tag -> tag links
+        kw_node = parser.css_first("meta[name='keywords']")
+        if kw_node and (c := kw_node.attributes.get("content")):
+            keywords = c.strip()
+        elif tag_nodes := parser.css("meta[property='og:video:tag']"):
+            tags = [t.attributes.get("content") for t in tag_nodes if t.attributes.get("content")]
+            keywords = ", ".join(tags) if tags else None
+        elif tag_links := parser.css("a[href*='/tags/']"):
+            tags = [a.text(strip=True) for a in tag_links if a.text(strip=True)]
+            keywords = ", ".join(tags) if tags else None
+        else:
+            keywords = None
+
+        if not keywords:
+            logger.warning("Keywords not found for %s", url)
+
+        # 6. m3u8 Base URL: packed JS regex -> direct playlist URL -> surrit URL
+        m3u8_base_url = None
+        match = regex_m3u8_js.search(content)
+        if match:
+            url_parts = match.group(1).split("|")[::-1]
+            if len(url_parts) >= 9:
+                m3u8_base_url = (
+                    f"{url_parts[1]}://{url_parts[2]}.{url_parts[3]}/"
+                    f"{url_parts[4]}-{url_parts[5]}-{url_parts[6]}-{url_parts[7]}-{url_parts[8]}/playlist.m3u8"
+                )
+        if not m3u8_base_url:
+            direct_match = re.search(r"https?://[^\s\"']+/playlist\.m3u8", content)
+            if direct_match:
+                m3u8_base_url = direct_match.group(0)
+        if not m3u8_base_url:
+            surrit_match = re.search(r"https?:[\\/]+surrit\.com[\\/]+([a-f0-9-]+)[\\/]+", content)
+            if surrit_match:
+                m3u8_base_url = f"https://surrit.com/{surrit_match.group(1)}/playlist.m3u8"
+
+        if not m3u8_base_url:
+            logger.warning("m3u8 base URL not found for %s", url)
 
         return {
             "title": title,
@@ -189,7 +282,6 @@ class Video(BaseMedia):
             "length": length,
         }
 
-
     async def download(self, configuration: DownloadConfigHLS) -> bool | DownloadReport:
         """
         :param configuration:
@@ -197,11 +289,14 @@ class Video(BaseMedia):
         """
         try:
             await self.load_fields("m3u8_base_url", "title")
+            if not self.m3u8_base_url:
+                raise DownloadFailed(f"Cannot download {self.url}: m3u8 base URL is missing")
+
             config = copy.deepcopy(configuration)
             config.m3u8_base_url = self.m3u8_base_url
 
             if not config.no_title:
-                config.path = os.path.join(config.path, f"{self.title}.mp4")
+                config.path = os.path.join(config.path, f"{self.title or 'video'}.mp4")
 
             return await self.core.download(configuration=config)
         except DownloadCancelled:
