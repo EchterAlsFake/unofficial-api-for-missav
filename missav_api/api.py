@@ -1,6 +1,4 @@
-import os
 import re
-import copy
 import time
 import uuid
 import hmac
@@ -9,7 +7,9 @@ import logging
 import asyncio
 import argparse
 
-from base_api.modules.logger import configure_app_logging
+from missav_api.modules import errors as provider_errors
+from base_api.modules.provider import fetch_content, download_errors, download_hls
+from base_api.modules.logger import configure_app_logging, get_logger
 
 from base_api.modules.static_functions import str_to_bool
 from functools import partial
@@ -38,16 +38,6 @@ from base_api import (
     make_iterator_config as _base_make_iterator_config,
 )
 from base_api.modules.type_hints import DownloadReport
-from base_api.modules.errors import (
-    DownloadCancelled,
-    BotProtectionDetected,
-    HTTPStatusError,
-    InvalidProxy,
-    NetworkRequestError,
-    RequestRetriesExhausted,
-    ResourceGone,
-    UnknownError,
-)
 
 from missav_api.modules.errors import (NetworkError, NotFound, UnknownNetworkError, DownloadFailed, BotDetection,
                                 ProxyError)
@@ -59,8 +49,7 @@ DATABASE_ID = "missav-default"
 PUBLIC_TOKEN = "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV"
 # You can change these if you want
 
-logger = logging.getLogger("MissAV API")
-logger.addHandler(logging.NullHandler())
+logger = get_logger(__name__)
 
 SCRAPE_RETRY_POLICY = RetryPolicy(max_attempts=3)
 
@@ -119,35 +108,9 @@ async def _post(core: BaseCore, path: str, json_body: dict, timeout: float = 9) 
     return resp.json()
 
 
-async def get_html_content(core: BaseCore, url: str) -> str:
-    try:
-        return await core.fetch_text(url)
-
-    except HTTPStatusError as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        if e.status_code == 404:
-            raise NotFound(f"Server returned 404 for: {url}") from e
-        raise NetworkError(f"Request failed for {url}: {e}") from e
-
-    except (NetworkRequestError, RequestRetriesExhausted) as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise NetworkError(f"Request failed for {url}: {e}") from e
-
-    except InvalidProxy as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise ProxyError(f"Request failed for {url}: {e}") from e
-
-    except BotProtectionDetected as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise BotDetection(f"Request failed for {url}: {e}") from e
-
-    except UnknownError as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise UnknownNetworkError(f"Request failed for {url}: {e}") from e
-
-    except Exception:
-        logger.exception("Failed to fetch or decode response for %s", url)
-        raise
+async def get_html_content(core: BaseCore, url: str, *, owner=None) -> str:
+    return await fetch_content(core, url, logger=logger, owner=owner,
+                               error_types=provider_errors)
 
 
 @dataclass(kw_only=True, slots=True)
@@ -164,7 +127,7 @@ class Video(BaseMedia):
     loader_methods: ClassVar[dict[str, str]] = {"html": "_load_html"}
 
     async def _load_html(self) -> dict[str, object]:
-        html_content = await get_html_content(core=self.core, url=self.url)
+        html_content = await get_html_content(core=self.core, url=self.url, owner=self)
         return await asyncio.to_thread(self._extract_from_html, html_content)
 
     def _extract_from_html(self, html_content: str | None = None) -> dict[str, Any]:
@@ -282,28 +245,9 @@ class Video(BaseMedia):
             "length": length,
         }
 
+    @download_errors(DownloadFailed)
     async def download(self, configuration: DownloadConfigHLS) -> bool | DownloadReport:
-        """
-        :param configuration:
-        :return:
-        """
-        try:
-            await self.load_fields("m3u8_base_url", "title")
-            if not self.m3u8_base_url:
-                raise DownloadFailed(f"Cannot download {self.url}: m3u8 base URL is missing")
-
-            config = copy.deepcopy(configuration)
-            config.m3u8_base_url = self.m3u8_base_url
-
-            if not config.no_title:
-                config.path = os.path.join(config.path, f"{self.title or 'video'}.mp4")
-
-            return await self.core.download(configuration=config)
-        except DownloadCancelled:
-            raise
-        except Exception as e:
-            logger.exception("Download failed for %s: %s", self.url, e)
-            raise DownloadFailed(f"Download failed for {self.url}: {e}") from e
+        return await download_hls(self, configuration)
 
 
 class Client:
