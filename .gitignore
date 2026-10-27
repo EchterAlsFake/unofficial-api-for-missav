@@ -169,3 +169,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.ruff_cache/
+.coverage*
+.venv/
+*.mp4
+*.mp4.tmp

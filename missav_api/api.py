@@ -6,6 +6,7 @@ import hashlib
 import logging
 import asyncio
 import argparse
+from html import unescape
 
 from missav_api.modules import errors as provider_errors
 from base_api.modules.provider import fetch_content, download_errors, download_hls
@@ -13,6 +14,7 @@ from base_api.modules.logger import configure_app_logging, get_logger
 
 from base_api.modules.static_functions import str_to_bool
 from functools import partial
+from contextlib import aclosing
 from urllib.parse import quote
 from typing import AsyncGenerator, ClassVar, Any
 from dataclasses import dataclass
@@ -225,9 +227,9 @@ class Video(BaseMedia):
                     f"{url_parts[4]}-{url_parts[5]}-{url_parts[6]}-{url_parts[7]}-{url_parts[8]}/playlist.m3u8"
                 )
         if not m3u8_base_url:
-            direct_match = re.search(r"https?://[^\s\"']+/playlist\.m3u8", content)
+            direct_match = re.search(r"https?://[^\s\"'<>]+\.m3u8(?:\?[^\s\"'<>]*)?", content.replace(r"\/", "/"))
             if direct_match:
-                m3u8_base_url = direct_match.group(0)
+                m3u8_base_url = unescape(direct_match.group(0))
         if not m3u8_base_url:
             surrit_match = re.search(r"https?:[\\/]+surrit\.com[\\/]+([a-f0-9-]+)[\\/]+", content)
             if surrit_match:
@@ -253,7 +255,7 @@ class Video(BaseMedia):
 class Client:
     def __init__(self, core: BaseCore | None = None):
         if core is None:
-            core = BaseCore()
+            core = BaseCore(RuntimeConfig())
         self.core = core
         self.core.configuration.impersonation = "safari17_2_ios" # Required
         self.core.initialize_session()
@@ -278,6 +280,9 @@ class Client:
         Body fields follow the snippet’s Recombee client (searchQuery, count, scenario, filter, booster, logic, etc.)
         """
         helper = Helper(constructor=Video, core=self.core)
+
+        if video_count < 1:
+            raise ValueError("video_count must be positive")
 
         return_properties = True
         user_id = f"anon_{uuid.uuid4().hex[:16]}"
@@ -308,8 +313,9 @@ class Client:
             item_extractor=cubed_function,
             iterator_config=iterator_config,
         )
-        async for result in stream:
-            yield result
+        async with aclosing(stream):
+            async for result in stream:
+                yield result
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -340,18 +346,21 @@ async def run_main(args_list: list[str] | None = None):
         parser.print_help()
         return
 
-    client = Client()
-    for url in urls:
-        print(f"Fetching video information for: {url}")
-        try:
-            video = await client.get_video(url, load_html=True)
-            title = getattr(video, "title", None) or url
-            print(f"Starting download for: {title}")
-            await video.download(configuration=config)
-            print(f"Download complete: {title}")
-        except Exception as e:
-            logger.exception("CLI failed while processing %s", url)
-            print(f"Error downloading {url}: {e}")
+    async with BaseCore(RuntimeConfig()) as core:
+        client = Client(core=core)
+        for url in urls:
+            print(f"Fetching video information for: {url}")
+            try:
+                video = await client.get_video(url, load_html=True)
+                title = getattr(video, "title", None) or url
+                print(f"Starting download for: {title}")
+                result = await video.download(configuration=config)
+                if result is False or getattr(result, "status", None) == "failed":
+                    raise DownloadFailed("Download did not complete")
+                print(f"Download complete: {title}")
+            except Exception as e:
+                logger.exception("CLI failed while processing %s", url)
+                print(f"Error downloading {url}: {e}")
 
 
 def main():

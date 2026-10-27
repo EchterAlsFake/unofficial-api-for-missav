@@ -107,5 +107,5 @@ async def test_download_missing_m3u8():
 
     config = DownloadConfigHLS(quality="best", path="/tmp")
     with patch.object(Video, "load_fields", new_callable=AsyncMock):
-        with pytest.raises(DownloadFailed, match="m3u8 base URL is missing"):
+        with pytest.raises(DownloadFailed, match="No HLS stream URL available"):
             await video.download(config)

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -166,31 +166,16 @@ wheels = [
 
 [[package]]
 name = "eaf-base-api"
-version = "4.2.0"
-source = { editable = "../eaf_base_api" }
+version = "4.2.5"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cachetools" },
     { name = "curl-cffi" },
     { name = "tenacity" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "av", marker = "python_full_version >= '3.12' and extra == 'hls'" },
-    { name = "cachetools", specifier = ">=7.0.0" },
-    { name = "curl-cffi" },
-    { name = "m3u8", marker = "extra == 'hls'" },
-    { name = "tenacity", specifier = ">=9.1.2" },
-]
-provides-extras = ["hls"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy" },
-    { name = "pylint" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "types-m3u8" },
+sdist = { url = "https://files.pythonhosted.org/packages/c2/14/d53d4cbde679d694dc7d0095591af45f757343e46dd19a2e17e385f47abd/eaf_base_api-4.2.5.tar.gz", hash = "sha256:6947acf9e543840cfd7b0c418f8676993ca6aa80d89b1acc5dec3a698526ccc7", size = 77294, upload-time = "2026-10-27T20:25:52.981Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/ff/a4bdb5ae05d713a01795a448ffb1f04363b2a4baf25c1f7db29fd7e6a139/eaf_base_api-4.2.5-py3-none-any.whl", hash = "sha256:31f3e8e2125b5abf9bcebf9c5e8d8027b1dd198d4132efeff9a39ca7a460e143", size = 77916, upload-time = "2026-10-27T20:25:51.341Z" },
 ]
 
 [[package]]
@@ -309,7 +294,7 @@ wheels = [
 
 [[package]]
 name = "unofficial-api-for-missav"
-version = "2.6"
+version = "2.6.2"
 source = { editable = "." }
 dependencies = [
     { name = "curl-cffi" },
@@ -327,7 +312,7 @@ av = [
 requires-dist = [
     { name = "av", marker = "extra == 'av'" },
     { name = "curl-cffi" },
-    { name = "eaf-base-api", editable = "../eaf_base_api" },
+    { name = "eaf-base-api", specifier = ">=4.2.5" },
     { name = "m3u8" },
     { name = "selectolax" },
 ]
